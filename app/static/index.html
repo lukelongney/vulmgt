@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vulnerability Management Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .severity-critical { background-color: #dc2626; color: white; }
+    .severity-high { background-color: #ea580c; color: white; }
+    .severity-medium { background-color: #ca8a04; color: white; }
+    .severity-low { background-color: #16a34a; color: white; }
+    .severity-info { background-color: #6b7280; color: white; }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+  <div class="container mx-auto px-4 py-8">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-8">
+      <h1 class="text-3xl font-bold text-gray-800">Vulnerability Dashboard</h1>
+      <button onclick="openImportModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+        Import Report
+      </button>
+    </div>
+
+    <!-- Stats Cards -->
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8" id="stats">
+      <div class="bg-white rounded-lg shadow p-4 text-center">
+        <div class="text-3xl font-bold text-red-600" id="stat-critical">-</div>
+        <div class="text-gray-500">Critical</div>
+      </div>
+      <div class="bg-white rounded-lg shadow p-4 text-center">
+        <div class="text-3xl font-bold text-orange-600" id="stat-high">-</div>
+        <div class="text-gray-500">High</div>
+      </div>
+      <div class="bg-white rounded-lg shadow p-4 text-center">
+        <div class="text-3xl font-bold text-yellow-600" id="stat-medium">-</div>
+        <div class="text-gray-500">Medium</div>
+      </div>
+      <div class="bg-white rounded-lg shadow p-4 text-center">
+        <div class="text-3xl font-bold text-green-600" id="stat-low">-</div>
+        <div class="text-gray-500">Low</div>
+      </div>
+      <div class="bg-white rounded-lg shadow p-4 text-center">
+        <div class="text-3xl font-bold text-gray-600" id="stat-total">-</div>
+        <div class="text-gray-500">Total Open</div>
+      </div>
+    </div>
+
+    <!-- Approaching SLA Warning -->
+    <div class="bg-amber-50 border-l-4 border-amber-500 rounded-lg shadow mb-8 p-4" id="sla-warning">
+      <h2 class="text-lg font-semibold text-amber-800 mb-2">Approaching SLA Deadline</h2>
+      <div id="sla-list" class="space-y-2">Loading...</div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="bg-white rounded-lg shadow">
+      <div class="border-b">
+        <nav class="flex">
+          <button onclick="showTab('vulns')" id="tab-vulns" class="px-6 py-3 border-b-2 border-blue-600 text-blue-600 font-medium">
+            Vulnerabilities
+          </button>
+          <button onclick="showTab('insights')" id="tab-insights" class="px-6 py-3 text-gray-500 hover:text-gray-700">
+            AI Insights
+          </button>
+          <button onclick="showTab('imports')" id="tab-imports" class="px-6 py-3 text-gray-500 hover:text-gray-700">
+            Import History
+          </button>
+        </nav>
+      </div>
+
+      <!-- Vulnerabilities Tab -->
+      <div id="content-vulns" class="p-4">
+        <div class="flex gap-4 mb-4">
+          <select id="filter-severity" onchange="loadVulnerabilities()" class="border rounded px-3 py-2">
+            <option value="">All Severities</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+          <select id="filter-status" onchange="loadVulnerabilities()" class="border rounded px-3 py-2">
+            <option value="">All Statuses</option>
+            <option value="open">Open</option>
+            <option value="in_progress">In Progress</option>
+            <option value="resolved">Resolved</option>
+          </select>
+          <input type="text" id="filter-host" placeholder="Filter by host..."
+                 onkeyup="loadVulnerabilities()" class="border rounded px-3 py-2 flex-1">
+        </div>
+        <div id="vuln-table" class="overflow-x-auto">Loading...</div>
+      </div>
+
+      <!-- Insights Tab -->
+      <div id="content-insights" class="p-4 hidden">
+        <button onclick="loadInsights()" class="bg-purple-600 text-white px-4 py-2 rounded mb-4 hover:bg-purple-700">
+          Generate AI Insights
+        </button>
+        <div id="insights-content">Click button to generate insights...</div>
+      </div>
+
+      <!-- Imports Tab -->
+      <div id="content-imports" class="p-4 hidden">
+        <div id="imports-list">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Import Modal -->
+  <div id="import-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center">
+    <div class="bg-white rounded-lg p-6 w-full max-w-md">
+      <h2 class="text-xl font-bold mb-4">Import Vulnerability Report</h2>
+      <form id="import-form" onsubmit="submitImport(event)">
+        <div class="mb-4">
+          <label class="block text-gray-700 mb-2">Scanner Type</label>
+          <select name="scanner" required class="w-full border rounded px-3 py-2">
+            <option value="qualys">Qualys</option>
+            <option value="tenable">Tenable</option>
+          </select>
+        </div>
+        <div class="mb-4">
+          <label class="block text-gray-700 mb-2">Report File (.xlsx)</label>
+          <input type="file" name="file" accept=".xlsx,.xls" required class="w-full">
+        </div>
+        <div class="flex justify-end gap-2">
+          <button type="button" onclick="closeImportModal()" class="px-4 py-2 border rounded">Cancel</button>
+          <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Import</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
