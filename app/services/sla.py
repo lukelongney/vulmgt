@@ -1,7 +1,7 @@
 # app/services/sla.py
 from datetime import datetime, timedelta
 from app.models import Severity
-from app.config import get_settings
+from app.config import get_settings, get_effective_date
 
 
 def get_sla_days(severity: Severity) -> int:
@@ -25,10 +25,10 @@ def calculate_sla_deadline(severity: Severity, first_seen: datetime) -> datetime
 
 def calculate_sla_status(first_seen: datetime, deadline: datetime) -> tuple[int, float]:
     """
-    Calculate SLA status.
+    Calculate SLA status using effective date (supports time simulation).
     Returns: (days_remaining, percent_elapsed)
     """
-    now = datetime.now()
+    now = get_effective_date()
     total_days = (deadline - first_seen).days
     elapsed_days = (now - first_seen).days
     days_remaining = (deadline - now).days

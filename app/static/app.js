@@ -2,11 +2,112 @@
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
+  loadEffectiveDate();
   loadStats();
   loadApproachingSLA();
   loadVulnerabilities();
   loadImports();
 });
+
+// ==========================================
+// Time Simulation Functions
+// ==========================================
+
+// Load and display the current effective date
+async function loadEffectiveDate() {
+  try {
+    const res = await fetch('/api/simulation/date');
+    const data = await res.json();
+
+    const dateStr = data.effective_date.split('T')[0];
+    document.getElementById('effective-date').textContent = dateStr;
+    document.getElementById('sim-date-input').value = dateStr;
+
+    const badge = document.getElementById('simulation-badge');
+    if (data.simulated) {
+      badge.classList.remove('hidden');
+    } else {
+      badge.classList.add('hidden');
+    }
+  } catch (err) {
+    console.error('Failed to load effective date:', err);
+  }
+}
+
+// Set simulated date from input
+async function setSimulatedDate() {
+  const dateInput = document.getElementById('sim-date-input').value;
+  if (!dateInput) {
+    alert('Please select a date');
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/simulation/date', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: dateInput })
+    });
+
+    if (!res.ok) throw new Error('Failed to set date');
+
+    // Refresh everything
+    await loadEffectiveDate();
+    loadStats();
+    loadApproachingSLA();
+    loadVulnerabilities();
+  } catch (err) {
+    alert('Failed to set simulated date: ' + err.message);
+  }
+}
+
+// Clear simulated date (return to real time)
+async function clearSimulatedDate() {
+  try {
+    const res = await fetch('/api/simulation/date', {
+      method: 'DELETE'
+    });
+
+    if (!res.ok) throw new Error('Failed to clear date');
+
+    // Refresh everything
+    await loadEffectiveDate();
+    loadStats();
+    loadApproachingSLA();
+    loadVulnerabilities();
+  } catch (err) {
+    alert('Failed to clear simulated date: ' + err.message);
+  }
+}
+
+// Advance the date by N days
+async function advanceDay(days) {
+  try {
+    // Get current effective date
+    const res = await fetch('/api/simulation/date');
+    const data = await res.json();
+
+    // Parse and advance
+    const current = new Date(data.effective_date);
+    current.setDate(current.getDate() + days);
+    const newDate = current.toISOString().split('T')[0];
+
+    // Set new date
+    await fetch('/api/simulation/date', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: newDate })
+    });
+
+    // Refresh everything
+    await loadEffectiveDate();
+    loadStats();
+    loadApproachingSLA();
+    loadVulnerabilities();
+  } catch (err) {
+    alert('Failed to advance date: ' + err.message);
+  }
+}
 
 // Load statistics
 async function loadStats() {

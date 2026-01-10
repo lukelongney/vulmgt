@@ -16,11 +16,35 @@
 <body class="bg-gray-100 min-h-screen">
   <div class="container mx-auto px-4 py-8">
     <!-- Header -->
-    <div class="flex justify-between items-center mb-8">
+    <div class="flex justify-between items-center mb-4">
       <h1 class="text-3xl font-bold text-gray-800">Vulnerability Dashboard</h1>
       <button onclick="openImportModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
         Import Report
       </button>
+    </div>
+
+    <!-- Time Simulation Control -->
+    <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-3 mb-8 flex items-center gap-4">
+      <div class="flex items-center gap-2">
+        <span class="text-indigo-700 font-medium">Effective Date:</span>
+        <span id="effective-date" class="font-mono bg-white px-2 py-1 rounded border">-</span>
+        <span id="simulation-badge" class="hidden bg-indigo-600 text-white text-xs px-2 py-1 rounded">SIMULATED</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <input type="date" id="sim-date-input" class="border rounded px-2 py-1">
+        <button onclick="setSimulatedDate()" class="bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700 text-sm">
+          Set Date
+        </button>
+        <button onclick="clearSimulatedDate()" class="bg-gray-500 text-white px-3 py-1 rounded hover:bg-gray-600 text-sm">
+          Reset to Now
+        </button>
+        <button onclick="advanceDay(1)" class="bg-amber-500 text-white px-3 py-1 rounded hover:bg-amber-600 text-sm">
+          +1 Day
+        </button>
+        <button onclick="advanceDay(7)" class="bg-amber-500 text-white px-3 py-1 rounded hover:bg-amber-600 text-sm">
+          +1 Week
+        </button>
+      </div>
     </div>
 
     <!-- Stats Cards -->

@@ -1,9 +1,15 @@
-"""Generate sample Qualys and Tenable XLSX files for testing."""
+"""Generate sample Qualys and Tenable XLSX files for testing.
+
+Creates 3 weeks of data for each scanner to simulate vulnerability lifecycle:
+- Week 1: Initial scan with 10 vulnerabilities (baseline)
+- Week 2: +10% new issues (1 new = 11 total)
+- Week 3: -20% resolved (2 closed) + 5% new (1 new) = 10 total
+"""
 import openpyxl
 from pathlib import Path
 
-# Sample vulnerability data
-SAMPLE_VULNS = [
+# Base vulnerability data - 10 vulnerabilities for clean percentage math
+BASE_VULNS = [
     {
         "host": "192.168.1.10",
         "cve": "CVE-2024-1234",
@@ -132,16 +138,110 @@ SAMPLE_VULNS = [
         "qid": "78901",
         "plugin_id": "32109",
     },
+    {
+        "host": "192.168.1.70",
+        "cve": "CVE-2024-9012",
+        "title": "Redis Unauthorized Access",
+        "description": "Redis server allows unauthorized access due to missing authentication.",
+        "solution": "Enable AUTH in Redis configuration.",
+        "severity_qualys": "4",
+        "severity_tenable": "High",
+        "cvss": 7.5,
+        "port": 6379,
+        "protocol": "TCP",
+        "service": "Redis",
+        "os": "Ubuntu 22.04",
+        "qid": "89012",
+        "plugin_id": "21098",
+    },
+    {
+        "host": "192.168.1.80",
+        "cve": "CVE-2024-0123",
+        "title": "Kubernetes API Server RBAC Bypass",
+        "description": "A bypass vulnerability in Kubernetes RBAC allows privilege escalation.",
+        "solution": "Update Kubernetes to the latest patched version.",
+        "severity_qualys": "5",
+        "severity_tenable": "Critical",
+        "cvss": 9.1,
+        "port": 6443,
+        "protocol": "TCP",
+        "service": "Kubernetes",
+        "os": "Ubuntu 22.04",
+        "qid": "90123",
+        "plugin_id": "10987",
+    },
 ]
 
+# Week 2: +10% new issues (1 new vulnerability)
+WEEK2_NEW = [
+    {
+        "host": "192.168.1.90",
+        "cve": "CVE-2024-1111",
+        "title": "MongoDB NoSQL Injection",
+        "description": "A NoSQL injection vulnerability in MongoDB allows data exfiltration.",
+        "solution": "Update MongoDB and sanitize user inputs.",
+        "severity_qualys": "4",
+        "severity_tenable": "High",
+        "cvss": 8.2,
+        "port": 27017,
+        "protocol": "TCP",
+        "service": "MongoDB",
+        "os": "Ubuntu 22.04",
+        "qid": "91111",
+        "plugin_id": "11111",
+    },
+]
 
-def create_qualys_sample(output_path: Path):
-    """Create a sample Qualys report."""
+# Week 3: +5% new issues (1 new vulnerability based on week 2 total of 11)
+WEEK3_NEW = [
+    {
+        "host": "192.168.1.100",
+        "cve": "CVE-2024-2222",
+        "title": "Elasticsearch Remote Code Execution",
+        "description": "A scripting vulnerability in Elasticsearch allows remote code execution.",
+        "solution": "Disable dynamic scripting or update Elasticsearch.",
+        "severity_qualys": "5",
+        "severity_tenable": "Critical",
+        "cvss": 9.8,
+        "port": 9200,
+        "protocol": "TCP",
+        "service": "Elasticsearch",
+        "os": "CentOS 8",
+        "qid": "92222",
+        "plugin_id": "22222",
+    },
+]
+
+# Week 3: 20% resolved (2 vulnerabilities closed from week 2's 11 total)
+# Resolving: Apache RCE and OpenSSL Buffer Overflow (the two criticals on 192.168.1.10)
+RESOLVED_WEEK3 = ["CVE-2024-1234", "CVE-2024-5678"]
+
+
+def get_week_vulns(week: int) -> list:
+    """Get vulnerabilities for a specific week."""
+    if week == 1:
+        # Week 1: 10 baseline vulnerabilities
+        return BASE_VULNS.copy()
+    elif week == 2:
+        # Week 2: All baseline + 10% new (1 new) = 11 total
+        vulns = BASE_VULNS.copy()
+        vulns.extend(WEEK2_NEW)
+        return vulns
+    elif week == 3:
+        # Week 3: Week 2 - 20% resolved (2) + 5% new (1) = 10 total
+        vulns = [v for v in BASE_VULNS if v["cve"] not in RESOLVED_WEEK3]
+        vulns.extend(WEEK2_NEW)  # MongoDB from week 2 still present
+        vulns.extend(WEEK3_NEW)  # New Elasticsearch vuln
+        return vulns
+    return []
+
+
+def create_qualys_report(vulns: list, output_path: Path):
+    """Create a Qualys format report."""
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Vulnerabilities"
 
-    # Headers matching Qualys format
     headers = [
         "IP Address", "DNS Name", "QID", "Severity", "CVSS Base Score",
         "QDS", "Title", "Threat", "Solution", "Port", "Protocol",
@@ -149,15 +249,14 @@ def create_qualys_sample(output_path: Path):
     ]
     ws.append(headers)
 
-    # Add data
-    for vuln in SAMPLE_VULNS:
+    for vuln in vulns:
         ws.append([
             vuln["host"],
             f"{vuln['host'].replace('.', '-')}.internal.local",
             vuln["qid"],
             vuln["severity_qualys"],
             vuln["cvss"],
-            vuln["cvss"] * 10,  # QDS score
+            vuln["cvss"] * 10,
             vuln["title"],
             vuln["description"],
             vuln["solution"],
@@ -169,16 +268,15 @@ def create_qualys_sample(output_path: Path):
         ])
 
     wb.save(output_path)
-    print(f"Created: {output_path}")
+    print(f"Created: {output_path} ({len(vulns)} vulnerabilities)")
 
 
-def create_tenable_sample(output_path: Path):
-    """Create a sample Tenable report."""
+def create_tenable_report(vulns: list, output_path: Path):
+    """Create a Tenable format report."""
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Vulnerabilities"
 
-    # Headers matching Tenable format
     headers = [
         "Host", "DNS Name", "Plugin ID", "Risk", "CVSS v3.0 Base Score",
         "VPR", "Name", "Description", "Solution", "Port", "Protocol",
@@ -186,15 +284,14 @@ def create_tenable_sample(output_path: Path):
     ]
     ws.append(headers)
 
-    # Add data
-    for vuln in SAMPLE_VULNS:
+    for vuln in vulns:
         ws.append([
             vuln["host"],
             f"{vuln['host'].replace('.', '-')}.internal.local",
             vuln["plugin_id"],
             vuln["severity_tenable"],
             vuln["cvss"],
-            vuln["cvss"],  # VPR score
+            vuln["cvss"],
             vuln["title"],
             vuln["description"],
             vuln["solution"],
@@ -206,13 +303,22 @@ def create_tenable_sample(output_path: Path):
         ])
 
     wb.save(output_path)
-    print(f"Created: {output_path}")
+    print(f"Created: {output_path} ({len(vulns)} vulnerabilities)")
 
 
 if __name__ == "__main__":
     fixtures_dir = Path(__file__).parent
     fixtures_dir.mkdir(exist_ok=True)
 
-    create_qualys_sample(fixtures_dir / "sample_qualys.xlsx")
-    create_tenable_sample(fixtures_dir / "sample_tenable.xlsx")
-    print("Done! Sample files created.")
+    print("Generating sample vulnerability reports...\n")
+
+    for week in [1, 2, 3]:
+        vulns = get_week_vulns(week)
+        create_qualys_report(vulns, fixtures_dir / f"sample_qualys_week{week}.xlsx")
+        create_tenable_report(vulns, fixtures_dir / f"sample_tenable_week{week}.xlsx")
+
+    print("\nSummary:")
+    print("- Week 1: 10 baseline vulnerabilities")
+    print("- Week 2: +10% new (1 MongoDB) = 11 total")
+    print("- Week 3: -20% resolved (2 Apache/OpenSSL) +5% new (1 Elasticsearch) = 10 total")
+    print("\nDone!")
