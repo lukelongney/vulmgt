@@ -191,6 +191,7 @@ async function loadVulnerabilities() {
             <th class="px-4 py-2 text-left">Status</th>
             <th class="px-4 py-2 text-left">SLA</th>
             <th class="px-4 py-2 text-left">Jira</th>
+            <th class="px-4 py-2 text-left">Jira Status</th>
             <th class="px-4 py-2 text-left">Actions</th>
           </tr>
         </thead>
@@ -202,7 +203,7 @@ async function loadVulnerabilities() {
               </td>
               <td class="px-4 py-2 font-mono text-sm">${v.cve || '-'}</td>
               <td class="px-4 py-2">${v.host}</td>
-              <td class="px-4 py-2 max-w-xs truncate" title="${v.title}">${v.title}</td>
+              <td class="px-4 py-2 max-w-xs truncate" title="${v.title}"><a href="#" onclick="openDetailModal('${v.id}'); return false;" class="text-blue-600 hover:underline">${v.title}</a></td>
               <td class="px-4 py-2">
                 <span class="px-2 py-1 bg-gray-100 rounded text-xs">${v.status}</span>
               </td>
@@ -212,9 +213,9 @@ async function loadVulnerabilities() {
               <td class="px-4 py-2">
                 ${v.jira_ticket_url ? `<a href="${v.jira_ticket_url}" target="_blank" class="text-blue-600 hover:underline">${v.jira_ticket_id}</a>` : '-'}
               </td>
+              <td class="px-4 py-2 text-sm">${v.jira_status || '-'}</td>
               <td class="px-4 py-2">
                 <div class="flex gap-1">
-                  <button onclick="openDetailModal('${v.id}')" class="text-xs px-2 py-1 bg-gray-100 rounded hover:bg-gray-200" title="View Details">View</button>
                   ${v.status !== 'accepted_risk' && v.status !== 'resolved' ? `<button onclick="openRiskModal('${v.id}')" class="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded hover:bg-purple-200" title="Accept Risk">Accept</button>` : ''}
                   ${v.jira_ticket_id ? `<button onclick="syncJira('${v.id}')" class="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200" title="Sync Jira">Sync</button>` : ''}
                   <button onclick="deleteVuln('${v.id}')" class="text-xs px-2 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200" title="Delete">Del</button>
@@ -489,17 +490,14 @@ async function loadAcceptedVulns() {
                 </td>
                 <td class="px-4 py-2 font-mono text-sm">${v.cve || '-'}</td>
                 <td class="px-4 py-2">${v.host}</td>
-                <td class="px-4 py-2 max-w-xs truncate" title="${v.title}">${v.title}</td>
+                <td class="px-4 py-2 max-w-xs truncate" title="${v.title}"><a href="#" onclick="openDetailModal('${v.id}'); return false;" class="text-blue-600 hover:underline">${v.title}</a></td>
                 <td class="px-4 py-2 font-mono">${v.egrc_number || '-'}</td>
                 <td class="px-4 py-2 ${isExpired ? 'text-red-600 font-bold' : ''}">${expiryDate}</td>
                 <td class="px-4 py-2">
                   ${v.jira_ticket_url ? `<a href="${v.jira_ticket_url}" target="_blank" class="text-blue-600 hover:underline">${v.jira_ticket_id}</a>` : '-'}
                 </td>
                 <td class="px-4 py-2">
-                  <div class="flex gap-1">
-                    <button onclick="openDetailModal('${v.id}')" class="text-xs px-2 py-1 bg-gray-100 rounded hover:bg-gray-200">View</button>
-                    <button onclick="deleteVuln('${v.id}')" class="text-xs px-2 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200">Del</button>
-                  </div>
+                  <button onclick="deleteVuln('${v.id}')" class="text-xs px-2 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200">Del</button>
                 </td>
               </tr>
             `;
