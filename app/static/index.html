@@ -16,15 +16,39 @@
 <body class="bg-gray-100 min-h-screen">
   <div class="container mx-auto px-4 py-8">
     <!-- Header -->
-    <div class="flex justify-between items-center mb-8">
+    <div class="flex justify-between items-center mb-4">
       <h1 class="text-3xl font-bold text-gray-800">Vulnerability Dashboard</h1>
       <button onclick="openImportModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
         Import Report
       </button>
     </div>
 
+    <!-- Time Simulation Control -->
+    <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-3 mb-8 flex items-center gap-4">
+      <div class="flex items-center gap-2">
+        <span class="text-indigo-700 font-medium">Effective Date:</span>
+        <span id="effective-date" class="font-mono bg-white px-2 py-1 rounded border">-</span>
+        <span id="simulation-badge" class="hidden bg-indigo-600 text-white text-xs px-2 py-1 rounded">SIMULATED</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <input type="date" id="sim-date-input" class="border rounded px-2 py-1">
+        <button onclick="setSimulatedDate()" class="bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700 text-sm">
+          Set Date
+        </button>
+        <button onclick="clearSimulatedDate()" class="bg-gray-500 text-white px-3 py-1 rounded hover:bg-gray-600 text-sm">
+          Reset to Now
+        </button>
+        <button onclick="advanceDay(1)" class="bg-amber-500 text-white px-3 py-1 rounded hover:bg-amber-600 text-sm">
+          +1 Day
+        </button>
+        <button onclick="advanceDay(7)" class="bg-amber-500 text-white px-3 py-1 rounded hover:bg-amber-600 text-sm">
+          +1 Week
+        </button>
+      </div>
+    </div>
+
     <!-- Stats Cards -->
-    <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8" id="stats">
+    <div class="grid grid-cols-2 md:grid-cols-7 gap-4 mb-8" id="stats">
       <div class="bg-white rounded-lg shadow p-4 text-center">
         <div class="text-3xl font-bold text-red-600" id="stat-critical">-</div>
         <div class="text-gray-500">Critical</div>
@@ -45,6 +69,14 @@
         <div class="text-3xl font-bold text-gray-600" id="stat-total">-</div>
         <div class="text-gray-500">Total Open</div>
       </div>
+      <div class="bg-white rounded-lg shadow p-4 text-center">
+        <div class="text-3xl font-bold text-purple-600" id="stat-risk-accepted">-</div>
+        <div class="text-gray-500">Risk Accepted</div>
+      </div>
+      <div class="bg-white rounded-lg shadow p-4 text-center">
+        <div class="text-3xl font-bold text-blue-600" id="stat-resolved">-</div>
+        <div class="text-gray-500">Resolved</div>
+      </div>
     </div>
 
     <!-- Approaching SLA Warning -->
@@ -60,11 +92,17 @@
           <button onclick="showTab('vulns')" id="tab-vulns" class="px-6 py-3 border-b-2 border-blue-600 text-blue-600 font-medium">
             Vulnerabilities
           </button>
+          <button onclick="showTab('accepted')" id="tab-accepted" class="px-6 py-3 text-gray-500 hover:text-gray-700">
+            Risk Accepted
+          </button>
           <button onclick="showTab('insights')" id="tab-insights" class="px-6 py-3 text-gray-500 hover:text-gray-700">
             AI Insights
           </button>
           <button onclick="showTab('imports')" id="tab-imports" class="px-6 py-3 text-gray-500 hover:text-gray-700">
             Import History
+          </button>
+          <button onclick="showTab('logs')" id="tab-logs" class="px-6 py-3 text-gray-500 hover:text-gray-700">
+            Logs
           </button>
         </nav>
       </div>
@@ -91,6 +129,17 @@
         <div id="vuln-table" class="overflow-x-auto">Loading...</div>
       </div>
 
+      <!-- Risk Accepted Tab -->
+      <div id="content-accepted" class="p-4 hidden">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-lg font-semibold">Risk Accepted Vulnerabilities</h3>
+          <button onclick="syncAllJira()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+            Sync All Jira Status
+          </button>
+        </div>
+        <div id="accepted-table" class="overflow-x-auto">Loading...</div>
+      </div>
+
       <!-- Insights Tab -->
       <div id="content-insights" class="p-4 hidden">
         <button onclick="loadInsights()" class="bg-purple-600 text-white px-4 py-2 rounded mb-4 hover:bg-purple-700">
@@ -102,6 +151,21 @@
       <!-- Imports Tab -->
       <div id="content-imports" class="p-4 hidden">
         <div id="imports-list">Loading...</div>
+      </div>
+
+      <!-- Logs Tab -->
+      <div id="content-logs" class="p-4 hidden">
+        <div class="flex justify-between items-center mb-4">
+          <button onclick="loadLogs()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+            Refresh Logs
+          </button>
+          <button onclick="clearLogs()" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700">
+            Clear Logs
+          </button>
+        </div>
+        <div id="logs-list" class="font-mono text-sm bg-gray-900 text-gray-100 p-4 rounded max-h-96 overflow-y-auto">
+          Loading...
+        </div>
       </div>
     </div>
   </div>
@@ -125,6 +189,46 @@
         <div class="flex justify-end gap-2">
           <button type="button" onclick="closeImportModal()" class="px-4 py-2 border rounded">Cancel</button>
           <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Import</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Vulnerability Detail Modal -->
+  <div id="detail-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+    <div class="bg-white rounded-lg p-6 w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-xl font-bold">Vulnerability Details</h2>
+        <button onclick="closeDetailModal()" class="text-gray-500 hover:text-gray-700 text-2xl">&times;</button>
+      </div>
+      <div id="detail-content">Loading...</div>
+      <div class="flex justify-end gap-2 mt-6 pt-4 border-t">
+        <button onclick="closeDetailModal()" class="px-4 py-2 border rounded hover:bg-gray-100">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Risk Accept Modal -->
+  <div id="risk-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+    <div class="bg-white rounded-lg p-6 w-full max-w-md">
+      <h2 class="text-xl font-bold mb-4">Accept Risk</h2>
+      <form id="risk-form" onsubmit="submitRiskAccept(event)">
+        <input type="hidden" id="risk-vuln-id">
+        <div class="mb-4">
+          <label class="block text-gray-700 mb-2">EGRC Reference Number *</label>
+          <input type="text" id="risk-egrc-number" required class="w-full border rounded px-3 py-2" placeholder="EGRC-2024-001">
+        </div>
+        <div class="mb-4">
+          <label class="block text-gray-700 mb-2">Expiry Date *</label>
+          <input type="date" id="risk-expiry-date" required class="w-full border rounded px-3 py-2">
+        </div>
+        <div class="mb-4">
+          <label class="block text-gray-700 mb-2">Reason</label>
+          <textarea id="risk-reason" rows="3" class="w-full border rounded px-3 py-2" placeholder="Business justification..."></textarea>
+        </div>
+        <div class="flex justify-end gap-2">
+          <button type="button" onclick="closeRiskModal()" class="px-4 py-2 border rounded">Cancel</button>
+          <button type="submit" class="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700">Accept Risk</button>
         </div>
       </form>
     </div>

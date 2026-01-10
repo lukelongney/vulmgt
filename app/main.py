@@ -5,7 +5,7 @@ from fastapi.responses import FileResponse
 from pathlib import Path
 
 from app.database import engine, Base
-from app.routers import imports, vulnerabilities, insights
+from app.routers import imports, vulnerabilities, insights, simulation
 
 # Create tables on startup
 Base.metadata.create_all(bind=engine)
@@ -16,6 +16,7 @@ app = FastAPI(title="Vulnerability Management", version="0.1.0")
 app.include_router(imports.router)
 app.include_router(vulnerabilities.router)
 app.include_router(insights.router)
+app.include_router(simulation.router)
 
 # Static files
 static_dir = Path(__file__).parent / "static"
