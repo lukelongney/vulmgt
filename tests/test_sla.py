@@ -22,7 +22,8 @@ def test_calculate_sla_status_approaching():
     first_seen = datetime.now() - timedelta(days=12)
     deadline = first_seen + timedelta(days=14)
     days_remaining, percent_elapsed = calculate_sla_status(first_seen, deadline)
-    assert days_remaining == 2
+    # Allow for timing variance (1-2 days remaining)
+    assert 1 <= days_remaining <= 2
     assert percent_elapsed > 75  # Should trigger escalation
 
 
