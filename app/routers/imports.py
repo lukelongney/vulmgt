@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from pathlib import Path
 from datetime import datetime
 import tempfile
+import logging
 
 from app.database import get_db
 from app.models import Vulnerability, Import, Scanner, Status
@@ -14,6 +15,26 @@ from app.services.claude_client import generate_remediation_guidance
 from app.services.jira_client import create_vulnerability_ticket, close_ticket
 
 router = APIRouter(prefix="/api/imports", tags=["imports"])
+logger = logging.getLogger(__name__)
+
+# In-memory log storage for UI display
+_import_logs: list[dict] = []
+MAX_LOGS = 100
+
+
+def add_log(level: str, message: str, details: str = None):
+    """Add a log entry."""
+    _import_logs.append({
+        "timestamp": datetime.now().isoformat(),
+        "level": level,
+        "message": message,
+        "details": details
+    })
+    # Keep only last MAX_LOGS
+    while len(_import_logs) > MAX_LOGS:
+        _import_logs.pop(0)
+    # Also log to console
+    getattr(logger, level.lower(), logger.info)(f"{message} - {details}")
 
 
 @router.post("/upload", response_model=ImportResponse)
@@ -31,11 +52,15 @@ async def upload_report(
         tmp_path = Path(tmp.name)
 
     try:
+        add_log("INFO", f"Starting import", f"File: {file.filename}, Scanner: {scanner.value}")
+
         # Parse based on scanner type
         if scanner == Scanner.QUALYS:
             vulns = list(parse_qualys_report(tmp_path))
         else:
             vulns = list(parse_tenable_report(tmp_path))
+
+        add_log("INFO", f"Parsed {len(vulns)} vulnerabilities from file")
 
         new_count = 0
         existing_count = 0
@@ -64,17 +89,23 @@ async def upload_report(
                 sla_deadline = calculate_sla_deadline(vuln_data.severity, first_seen)
 
                 # Generate AI remediation guidance
-                remediation = generate_remediation_guidance(
-                    cve=vuln_data.cve,
-                    title=vuln_data.title,
-                    description=vuln_data.description,
-                    solution=vuln_data.solution,
-                    severity=vuln_data.severity,
-                    host=vuln_data.host,
-                    os=vuln_data.os
-                )
+                try:
+                    remediation = generate_remediation_guidance(
+                        cve=vuln_data.cve,
+                        title=vuln_data.title,
+                        description=vuln_data.description,
+                        solution=vuln_data.solution,
+                        severity=vuln_data.severity,
+                        host=vuln_data.host,
+                        os=vuln_data.os
+                    )
+                except Exception as e:
+                    add_log("ERROR", "Failed to generate AI remediation", str(e))
+                    remediation = None
 
                 # Create Jira ticket
+                ticket_id = None
+                ticket_url = None
                 try:
                     ticket_id, ticket_url = create_vulnerability_ticket(
                         cve=vuln_data.cve,
@@ -90,9 +121,11 @@ async def upload_report(
                         solution=vuln_data.solution,
                         remediation_guidance=remediation
                     )
+                    add_log("INFO", f"Created Jira ticket {ticket_id}", f"CVE: {vuln_data.cve}, Host: {vuln_data.host}")
+                except ValueError as e:
+                    add_log("WARNING", "Jira not configured", str(e))
                 except Exception as e:
-                    ticket_id = None
-                    ticket_url = None
+                    add_log("ERROR", f"Failed to create Jira ticket", f"CVE: {vuln_data.cve}, Error: {str(e)}")
 
                 # Create database record
                 new_vuln = Vulnerability(
@@ -149,6 +182,8 @@ async def upload_report(
         db.commit()
         db.refresh(import_record)
 
+        add_log("INFO", f"Import complete", f"New: {new_count}, Existing: {existing_count}, Resolved: {resolved_count}")
+
         return import_record
 
     finally:
@@ -164,3 +199,16 @@ async def list_imports(
     """List recent imports."""
     imports = db.query(Import).order_by(Import.imported_at.desc()).limit(limit).all()
     return imports
+
+
+@router.get("/logs")
+async def get_logs():
+    """Get import logs for debugging."""
+    return {"logs": list(reversed(_import_logs))}
+
+
+@router.delete("/logs")
+async def clear_logs():
+    """Clear all logs."""
+    _import_logs.clear()
+    return {"message": "Logs cleared"}

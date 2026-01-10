@@ -43,6 +43,11 @@ def enrich_vulnerability(vuln: Vulnerability) -> dict:
         "jira_status": vuln.jira_status,
         "jira_assignee": vuln.jira_assignee,
         "resolved_date": vuln.resolved_date,
+        # Risk acceptance fields
+        "egrc_number": vuln.egrc_number,
+        "egrc_expiry_date": vuln.egrc_expiry_date,
+        "risk_accepted_date": vuln.risk_accepted_date,
+        "risk_accepted_reason": vuln.risk_accepted_reason,
     }
 
     if vuln.sla_deadline and vuln.first_seen:
@@ -107,13 +112,25 @@ async def get_stats(db: Session = Depends(get_db)):
     for sev, count in severity_counts:
         counts[sev.value] = count
 
+    # Count risk accepted
+    risk_accepted_count = db.query(func.count(Vulnerability.id)).filter(
+        Vulnerability.status == Status.ACCEPTED_RISK
+    ).scalar()
+
+    # Count resolved
+    resolved_count = db.query(func.count(Vulnerability.id)).filter(
+        Vulnerability.status == Status.RESOLVED
+    ).scalar()
+
     return {
         "critical": counts.get("critical", 0),
         "high": counts.get("high", 0),
         "medium": counts.get("medium", 0),
         "low": counts.get("low", 0),
         "info": counts.get("info", 0),
-        "total_open": sum(counts.values())
+        "total_open": sum(counts.values()),
+        "risk_accepted": risk_accepted_count,
+        "resolved": resolved_count
     }
 
 
@@ -144,3 +161,116 @@ async def update_vulnerability(
     db.commit()
     db.refresh(vuln)
     return enrich_vulnerability(vuln)
+
+
+@router.delete("/{vuln_id}")
+async def delete_vulnerability(vuln_id: str, db: Session = Depends(get_db)):
+    """Delete a single vulnerability and close its Jira ticket."""
+    from app.services.jira_client import close_ticket
+
+    vuln = db.query(Vulnerability).filter(Vulnerability.id == vuln_id).first()
+    if not vuln:
+        raise HTTPException(status_code=404, detail="Vulnerability not found")
+
+    # Close Jira ticket if exists
+    jira_closed = False
+    if vuln.jira_ticket_id:
+        try:
+            jira_closed = close_ticket(vuln.jira_ticket_id)
+        except Exception:
+            pass  # Continue even if Jira close fails
+
+    db.delete(vuln)
+    db.commit()
+    return {
+        "message": f"Deleted vulnerability {vuln_id}",
+        "jira_closed": jira_closed
+    }
+
+
+@router.post("/{vuln_id}/accept-risk", response_model=VulnerabilityResponse)
+async def accept_risk(
+    vuln_id: str,
+    egrc_number: str = Query(..., description="EGRC reference number"),
+    egrc_expiry_date: str = Query(..., description="Expiry date (YYYY-MM-DD)"),
+    reason: Optional[str] = Query(None, description="Reason for acceptance"),
+    db: Session = Depends(get_db)
+):
+    """Mark a vulnerability as risk accepted with EGRC details."""
+    vuln = db.query(Vulnerability).filter(Vulnerability.id == vuln_id).first()
+    if not vuln:
+        raise HTTPException(status_code=404, detail="Vulnerability not found")
+
+    vuln.status = Status.ACCEPTED_RISK
+    vuln.egrc_number = egrc_number
+    vuln.egrc_expiry_date = datetime.fromisoformat(egrc_expiry_date)
+    vuln.risk_accepted_date = datetime.now()
+    vuln.risk_accepted_reason = reason
+
+    db.commit()
+    db.refresh(vuln)
+    return enrich_vulnerability(vuln)
+
+
+@router.post("/{vuln_id}/sync-jira", response_model=VulnerabilityResponse)
+async def sync_jira_status(vuln_id: str, db: Session = Depends(get_db)):
+    """Sync status from Jira for a single vulnerability."""
+    from app.services.jira_client import sync_ticket_status
+
+    vuln = db.query(Vulnerability).filter(Vulnerability.id == vuln_id).first()
+    if not vuln:
+        raise HTTPException(status_code=404, detail="Vulnerability not found")
+
+    if not vuln.jira_ticket_id:
+        raise HTTPException(status_code=400, detail="No Jira ticket linked")
+
+    status = sync_ticket_status(vuln.jira_ticket_id)
+    if status:
+        vuln.jira_status = status.get("status")
+        vuln.jira_assignee = status.get("assignee")
+        db.commit()
+        db.refresh(vuln)
+
+    return enrich_vulnerability(vuln)
+
+
+@router.post("/sync-all-jira")
+async def sync_all_jira(db: Session = Depends(get_db)):
+    """Sync Jira status for all vulnerabilities with tickets."""
+    from app.services.jira_client import sync_ticket_status
+
+    vulns = db.query(Vulnerability).filter(
+        Vulnerability.jira_ticket_id.isnot(None),
+        Vulnerability.status.in_([Status.OPEN, Status.IN_PROGRESS])
+    ).all()
+
+    updated = 0
+    for vuln in vulns:
+        try:
+            status = sync_ticket_status(vuln.jira_ticket_id)
+            if status:
+                vuln.jira_status = status.get("status")
+                vuln.jira_assignee = status.get("assignee")
+                updated += 1
+        except Exception:
+            pass
+
+    db.commit()
+    return {"message": f"Synced {updated} of {len(vulns)} vulnerabilities"}
+
+
+@router.delete("/")
+async def delete_all_vulnerabilities(
+    confirm: bool = Query(..., description="Must be true to confirm deletion"),
+    db: Session = Depends(get_db)
+):
+    """Delete ALL vulnerabilities. Requires confirm=true."""
+    if not confirm:
+        raise HTTPException(status_code=400, detail="Must set confirm=true to delete all")
+
+    from app.models import Import
+    count = db.query(Vulnerability).count()
+    db.query(Vulnerability).delete()
+    db.query(Import).delete()
+    db.commit()
+    return {"message": f"Deleted {count} vulnerabilities and all import records"}

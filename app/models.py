@@ -58,6 +58,11 @@ class Vulnerability(Base):
     jira_status = Column(String)
     jira_assignee = Column(String)
     resolved_date = Column(DateTime)
+    # Risk acceptance fields
+    egrc_number = Column(String)
+    egrc_expiry_date = Column(DateTime)
+    risk_accepted_date = Column(DateTime)
+    risk_accepted_reason = Column(Text)
 
     __table_args__ = (
         # Unique constraint on host + cve

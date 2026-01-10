@@ -31,6 +31,10 @@ class VulnerabilityUpdate(BaseModel):
     jira_status: Optional[str] = None
     jira_assignee: Optional[str] = None
     resolved_date: Optional[datetime] = None
+    # Risk acceptance fields
+    egrc_number: Optional[str] = None
+    egrc_expiry_date: Optional[datetime] = None
+    risk_accepted_reason: Optional[str] = None
 
 
 class VulnerabilityResponse(VulnerabilityBase):
@@ -47,6 +51,11 @@ class VulnerabilityResponse(VulnerabilityBase):
     resolved_date: Optional[datetime] = None
     days_remaining: Optional[int] = None
     sla_percent_elapsed: Optional[float] = None
+    # Risk acceptance fields
+    egrc_number: Optional[str] = None
+    egrc_expiry_date: Optional[datetime] = None
+    risk_accepted_date: Optional[datetime] = None
+    risk_accepted_reason: Optional[str] = None
 
     class Config:
         from_attributes = True

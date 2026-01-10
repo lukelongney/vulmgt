@@ -6,7 +6,9 @@ document.addEventListener('DOMContentLoaded', () => {
   loadStats();
   loadApproachingSLA();
   loadVulnerabilities();
+  loadAcceptedVulns();
   loadImports();
+  loadLogs();
 });
 
 // ==========================================
@@ -120,6 +122,8 @@ async function loadStats() {
     document.getElementById('stat-medium').textContent = stats.medium;
     document.getElementById('stat-low').textContent = stats.low;
     document.getElementById('stat-total').textContent = stats.total_open;
+    document.getElementById('stat-risk-accepted').textContent = stats.risk_accepted;
+    document.getElementById('stat-resolved').textContent = stats.resolved;
   } catch (err) {
     console.error('Failed to load stats:', err);
   }
@@ -187,6 +191,7 @@ async function loadVulnerabilities() {
             <th class="px-4 py-2 text-left">Status</th>
             <th class="px-4 py-2 text-left">SLA</th>
             <th class="px-4 py-2 text-left">Jira</th>
+            <th class="px-4 py-2 text-left">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -206,6 +211,14 @@ async function loadVulnerabilities() {
               </td>
               <td class="px-4 py-2">
                 ${v.jira_ticket_url ? `<a href="${v.jira_ticket_url}" target="_blank" class="text-blue-600 hover:underline">${v.jira_ticket_id}</a>` : '-'}
+              </td>
+              <td class="px-4 py-2">
+                <div class="flex gap-1">
+                  <button onclick="openDetailModal('${v.id}')" class="text-xs px-2 py-1 bg-gray-100 rounded hover:bg-gray-200" title="View Details">View</button>
+                  ${v.status !== 'accepted_risk' && v.status !== 'resolved' ? `<button onclick="openRiskModal('${v.id}')" class="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded hover:bg-purple-200" title="Accept Risk">Accept</button>` : ''}
+                  ${v.jira_ticket_id ? `<button onclick="syncJira('${v.id}')" class="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200" title="Sync Jira">Sync</button>` : ''}
+                  <button onclick="deleteVuln('${v.id}')" class="text-xs px-2 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200" title="Delete">Del</button>
+                </div>
               </td>
             </tr>
           `).join('')}
@@ -386,7 +399,352 @@ async function submitImport(event) {
     loadApproachingSLA();
     loadVulnerabilities();
     loadImports();
+    loadLogs();
   } catch (err) {
     alert('Import failed: ' + err.message);
+  }
+}
+
+// ==========================================
+// Logs Functions
+// ==========================================
+
+async function loadLogs() {
+  try {
+    const res = await fetch('/api/imports/logs');
+    const data = await res.json();
+
+    const list = document.getElementById('logs-list');
+    if (!data.logs || data.logs.length === 0) {
+      list.innerHTML = '<p class="text-gray-400">No logs yet. Import a file to see logs.</p>';
+      return;
+    }
+
+    list.innerHTML = data.logs.map(log => {
+      const levelColor = {
+        'INFO': 'text-green-400',
+        'WARNING': 'text-yellow-400',
+        'ERROR': 'text-red-400'
+      }[log.level] || 'text-gray-400';
+
+      const time = log.timestamp.split('T')[1].split('.')[0];
+      return `<div class="mb-1">
+        <span class="text-gray-500">${time}</span>
+        <span class="${levelColor}">[${log.level}]</span>
+        <span class="text-white">${log.message}</span>
+        ${log.details ? `<span class="text-gray-400"> - ${log.details}</span>` : ''}
+      </div>`;
+    }).join('');
+  } catch (err) {
+    console.error('Failed to load logs:', err);
+  }
+}
+
+async function clearLogs() {
+  try {
+    await fetch('/api/imports/logs', { method: 'DELETE' });
+    loadLogs();
+  } catch (err) {
+    console.error('Failed to clear logs:', err);
+  }
+}
+
+// ==========================================
+// Risk Accepted Tab
+// ==========================================
+
+async function loadAcceptedVulns() {
+  try {
+    const res = await fetch('/api/vulnerabilities/?status=accepted_risk&limit=100');
+    const vulns = await res.json();
+
+    const table = document.getElementById('accepted-table');
+    if (vulns.length === 0) {
+      table.innerHTML = '<p class="text-gray-500">No risk-accepted vulnerabilities</p>';
+      return;
+    }
+
+    table.innerHTML = `
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="px-4 py-2 text-left">Severity</th>
+            <th class="px-4 py-2 text-left">CVE</th>
+            <th class="px-4 py-2 text-left">Host</th>
+            <th class="px-4 py-2 text-left">Title</th>
+            <th class="px-4 py-2 text-left">EGRC #</th>
+            <th class="px-4 py-2 text-left">Expiry</th>
+            <th class="px-4 py-2 text-left">Jira</th>
+            <th class="px-4 py-2 text-left">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${vulns.map(v => {
+            const expiryDate = v.egrc_expiry_date ? new Date(v.egrc_expiry_date).toLocaleDateString() : '-';
+            const isExpired = v.egrc_expiry_date && new Date(v.egrc_expiry_date) < new Date();
+            return `
+              <tr class="border-t hover:bg-gray-50 ${isExpired ? 'bg-red-50' : ''}">
+                <td class="px-4 py-2">
+                  <span class="px-2 py-1 rounded text-xs font-bold severity-${v.severity}">${v.severity.toUpperCase()}</span>
+                </td>
+                <td class="px-4 py-2 font-mono text-sm">${v.cve || '-'}</td>
+                <td class="px-4 py-2">${v.host}</td>
+                <td class="px-4 py-2 max-w-xs truncate" title="${v.title}">${v.title}</td>
+                <td class="px-4 py-2 font-mono">${v.egrc_number || '-'}</td>
+                <td class="px-4 py-2 ${isExpired ? 'text-red-600 font-bold' : ''}">${expiryDate}</td>
+                <td class="px-4 py-2">
+                  ${v.jira_ticket_url ? `<a href="${v.jira_ticket_url}" target="_blank" class="text-blue-600 hover:underline">${v.jira_ticket_id}</a>` : '-'}
+                </td>
+                <td class="px-4 py-2">
+                  <div class="flex gap-1">
+                    <button onclick="openDetailModal('${v.id}')" class="text-xs px-2 py-1 bg-gray-100 rounded hover:bg-gray-200">View</button>
+                    <button onclick="deleteVuln('${v.id}')" class="text-xs px-2 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200">Del</button>
+                  </div>
+                </td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (err) {
+    console.error('Failed to load accepted vulns:', err);
+  }
+}
+
+// ==========================================
+// Detail Modal
+// ==========================================
+
+function openDetailModal(vulnId) {
+  document.getElementById('detail-modal').classList.remove('hidden');
+  document.getElementById('detail-modal').classList.add('flex');
+  loadVulnDetail(vulnId);
+}
+
+function closeDetailModal() {
+  document.getElementById('detail-modal').classList.add('hidden');
+  document.getElementById('detail-modal').classList.remove('flex');
+}
+
+async function loadVulnDetail(vulnId) {
+  const content = document.getElementById('detail-content');
+  content.innerHTML = '<p class="text-gray-500">Loading...</p>';
+
+  try {
+    const res = await fetch(`/api/vulnerabilities/${vulnId}`);
+    if (!res.ok) throw new Error('Failed to load');
+    const v = await res.json();
+
+    content.innerHTML = `
+      <div class="grid grid-cols-2 gap-4">
+        <div class="col-span-2 bg-gray-50 p-4 rounded">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="px-2 py-1 rounded text-xs font-bold severity-${v.severity}">${v.severity.toUpperCase()}</span>
+            <span class="text-lg font-semibold">${v.title}</span>
+          </div>
+          <p class="text-gray-600">${v.description || 'No description available'}</p>
+        </div>
+
+        <div>
+          <h4 class="font-semibold mb-2">Identification</h4>
+          <div class="space-y-1 text-sm">
+            <p><span class="text-gray-500">ID:</span> <span class="font-mono">${v.id}</span></p>
+            <p><span class="text-gray-500">CVE:</span> ${v.cve || 'N/A'}</p>
+            <p><span class="text-gray-500">Scanner:</span> ${v.scanner}</p>
+            <p><span class="text-gray-500">Scanner ID:</span> ${v.scanner_id || 'N/A'}</p>
+          </div>
+        </div>
+
+        <div>
+          <h4 class="font-semibold mb-2">Target</h4>
+          <div class="space-y-1 text-sm">
+            <p><span class="text-gray-500">Host:</span> ${v.host}</p>
+            <p><span class="text-gray-500">Port:</span> ${v.port || 'N/A'}</p>
+            <p><span class="text-gray-500">Protocol:</span> ${v.protocol || 'N/A'}</p>
+            <p><span class="text-gray-500">Service:</span> ${v.service || 'N/A'}</p>
+            <p><span class="text-gray-500">OS:</span> ${v.os || 'N/A'}</p>
+          </div>
+        </div>
+
+        <div>
+          <h4 class="font-semibold mb-2">Scores</h4>
+          <div class="space-y-1 text-sm">
+            <p><span class="text-gray-500">Severity Score:</span> ${v.severity_score || 'N/A'}</p>
+            <p><span class="text-gray-500">VPR Score:</span> ${v.vpr_score || 'N/A'}</p>
+          </div>
+        </div>
+
+        <div>
+          <h4 class="font-semibold mb-2">Dates</h4>
+          <div class="space-y-1 text-sm">
+            <p><span class="text-gray-500">First Seen:</span> ${v.first_seen ? new Date(v.first_seen).toLocaleDateString() : 'N/A'}</p>
+            <p><span class="text-gray-500">Last Seen:</span> ${v.last_seen ? new Date(v.last_seen).toLocaleDateString() : 'N/A'}</p>
+            <p><span class="text-gray-500">SLA Deadline:</span> ${v.sla_deadline ? new Date(v.sla_deadline).toLocaleDateString() : 'N/A'}</p>
+            <p><span class="text-gray-500">Days Remaining:</span> <span class="${v.days_remaining < 0 ? 'text-red-600 font-bold' : ''}">${v.days_remaining !== null ? v.days_remaining : 'N/A'}</span></p>
+          </div>
+        </div>
+
+        <div>
+          <h4 class="font-semibold mb-2">Status</h4>
+          <div class="space-y-1 text-sm">
+            <p><span class="text-gray-500">Status:</span> <span class="px-2 py-1 bg-gray-100 rounded text-xs">${v.status}</span></p>
+            <p><span class="text-gray-500">Resolved Date:</span> ${v.resolved_date ? new Date(v.resolved_date).toLocaleDateString() : 'N/A'}</p>
+          </div>
+        </div>
+
+        <div>
+          <h4 class="font-semibold mb-2">Jira Integration</h4>
+          <div class="space-y-1 text-sm">
+            <p><span class="text-gray-500">Ticket:</span> ${v.jira_ticket_url ? `<a href="${v.jira_ticket_url}" target="_blank" class="text-blue-600 hover:underline">${v.jira_ticket_id}</a>` : 'N/A'}</p>
+            <p><span class="text-gray-500">Jira Status:</span> ${v.jira_status || 'N/A'}</p>
+            <p><span class="text-gray-500">Assignee:</span> ${v.jira_assignee || 'N/A'}</p>
+          </div>
+        </div>
+
+        ${v.status === 'accepted_risk' ? `
+        <div class="col-span-2 bg-purple-50 p-4 rounded">
+          <h4 class="font-semibold mb-2">Risk Acceptance</h4>
+          <div class="space-y-1 text-sm">
+            <p><span class="text-gray-500">EGRC Number:</span> <span class="font-mono">${v.egrc_number || 'N/A'}</span></p>
+            <p><span class="text-gray-500">Expiry Date:</span> ${v.egrc_expiry_date ? new Date(v.egrc_expiry_date).toLocaleDateString() : 'N/A'}</p>
+            <p><span class="text-gray-500">Accepted Date:</span> ${v.risk_accepted_date ? new Date(v.risk_accepted_date).toLocaleDateString() : 'N/A'}</p>
+            <p><span class="text-gray-500">Reason:</span> ${v.risk_accepted_reason || 'N/A'}</p>
+          </div>
+        </div>
+        ` : ''}
+
+        ${v.solution ? `
+        <div class="col-span-2 bg-green-50 p-4 rounded">
+          <h4 class="font-semibold mb-2">Solution</h4>
+          <p class="text-sm">${v.solution}</p>
+        </div>
+        ` : ''}
+
+        ${v.remediation_guidance ? `
+        <div class="col-span-2 bg-blue-50 p-4 rounded">
+          <h4 class="font-semibold mb-2">AI Remediation Guidance</h4>
+          <p class="text-sm whitespace-pre-wrap">${v.remediation_guidance}</p>
+        </div>
+        ` : ''}
+      </div>
+    `;
+  } catch (err) {
+    content.innerHTML = `<p class="text-red-600">Failed to load details: ${err.message}</p>`;
+  }
+}
+
+// ==========================================
+// Risk Accept Modal
+// ==========================================
+
+function openRiskModal(vulnId) {
+  document.getElementById('risk-vuln-id').value = vulnId;
+  document.getElementById('risk-modal').classList.remove('hidden');
+  document.getElementById('risk-modal').classList.add('flex');
+}
+
+function closeRiskModal() {
+  document.getElementById('risk-modal').classList.add('hidden');
+  document.getElementById('risk-modal').classList.remove('flex');
+  document.getElementById('risk-form').reset();
+}
+
+async function submitRiskAccept(event) {
+  event.preventDefault();
+
+  const vulnId = document.getElementById('risk-vuln-id').value;
+  const egrcNumber = document.getElementById('risk-egrc-number').value;
+  const expiryDate = document.getElementById('risk-expiry-date').value;
+  const reason = document.getElementById('risk-reason').value;
+
+  try {
+    const url = `/api/vulnerabilities/${vulnId}/accept-risk?egrc_number=${encodeURIComponent(egrcNumber)}&egrc_expiry_date=${expiryDate}${reason ? `&reason=${encodeURIComponent(reason)}` : ''}`;
+    const res = await fetch(url, { method: 'POST' });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to accept risk');
+    }
+
+    closeRiskModal();
+    loadStats();
+    loadVulnerabilities();
+    loadAcceptedVulns();
+    alert('Risk accepted successfully');
+  } catch (err) {
+    alert('Failed to accept risk: ' + err.message);
+  }
+}
+
+// ==========================================
+// Delete Vulnerability
+// ==========================================
+
+async function deleteVuln(vulnId) {
+  if (!confirm('Are you sure you want to delete this vulnerability? This will also close the Jira ticket if one exists.')) {
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/vulnerabilities/${vulnId}`, { method: 'DELETE' });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to delete');
+    }
+
+    const result = await res.json();
+    loadStats();
+    loadVulnerabilities();
+    loadAcceptedVulns();
+    loadApproachingSLA();
+
+    if (result.jira_closed) {
+      alert('Vulnerability deleted and Jira ticket closed');
+    } else {
+      alert('Vulnerability deleted');
+    }
+  } catch (err) {
+    alert('Failed to delete: ' + err.message);
+  }
+}
+
+// ==========================================
+// Jira Sync
+// ==========================================
+
+async function syncJira(vulnId) {
+  try {
+    const res = await fetch(`/api/vulnerabilities/${vulnId}/sync-jira`, { method: 'POST' });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to sync');
+    }
+
+    loadVulnerabilities();
+    loadAcceptedVulns();
+    alert('Jira status synced');
+  } catch (err) {
+    alert('Failed to sync Jira: ' + err.message);
+  }
+}
+
+async function syncAllJira() {
+  try {
+    const res = await fetch('/api/vulnerabilities/sync-all-jira', { method: 'POST' });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to sync');
+    }
+
+    const result = await res.json();
+    loadVulnerabilities();
+    loadAcceptedVulns();
+    alert(result.message);
+  } catch (err) {
+    alert('Failed to sync all Jira: ' + err.message);
   }
 }
