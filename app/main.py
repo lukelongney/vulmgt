@@ -4,6 +4,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pathlib import Path
 
+from app.database import engine, Base
+
+# Create tables on startup
+Base.metadata.create_all(bind=engine)
+
 app = FastAPI(title="Vulnerability Management", version="0.1.0")
 
 static_dir = Path(__file__).parent / "static"
