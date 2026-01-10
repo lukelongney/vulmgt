@@ -212,6 +212,23 @@ async def accept_risk(
     return enrich_vulnerability(vuln)
 
 
+def map_jira_to_vuln_status(jira_status: str) -> Status | None:
+    """Map Jira status to vulnerability status."""
+    jira_status_lower = jira_status.lower() if jira_status else ""
+
+    # Done/Closed/Resolved -> RESOLVED
+    if jira_status_lower in ["done", "closed", "resolved"]:
+        return Status.RESOLVED
+    # In Progress -> IN_PROGRESS
+    elif jira_status_lower in ["in progress", "in-progress"]:
+        return Status.IN_PROGRESS
+    # To Do/Open/Backlog -> OPEN
+    elif jira_status_lower in ["to do", "todo", "open", "backlog", "new"]:
+        return Status.OPEN
+
+    return None
+
+
 @router.post("/{vuln_id}/sync-jira", response_model=VulnerabilityResponse)
 async def sync_jira_status(vuln_id: str, db: Session = Depends(get_db)):
     """Sync status from Jira for a single vulnerability."""
@@ -228,6 +245,16 @@ async def sync_jira_status(vuln_id: str, db: Session = Depends(get_db)):
     if status:
         vuln.jira_status = status.get("status")
         vuln.jira_assignee = status.get("assignee")
+
+        # Map Jira status to vulnerability status
+        new_status = map_jira_to_vuln_status(vuln.jira_status)
+        if new_status and vuln.status != Status.ACCEPTED_RISK and vuln.status != new_status:
+            vuln.status = new_status
+            if new_status == Status.RESOLVED:
+                vuln.resolved_date = datetime.now()
+            else:
+                vuln.resolved_date = None  # Clear if reopened
+
         db.commit()
         db.refresh(vuln)
 
@@ -239,24 +266,44 @@ async def sync_all_jira(db: Session = Depends(get_db)):
     """Sync Jira status for all vulnerabilities with tickets."""
     from app.services.jira_client import sync_ticket_status
 
+    # Include RESOLVED to allow reopening if Jira ticket is reopened
     vulns = db.query(Vulnerability).filter(
         Vulnerability.jira_ticket_id.isnot(None),
-        Vulnerability.status.in_([Status.OPEN, Status.IN_PROGRESS])
+        Vulnerability.status.in_([Status.OPEN, Status.IN_PROGRESS, Status.RESOLVED])
     ).all()
 
     updated = 0
+    status_changes = {"resolved": 0, "in_progress": 0, "open": 0}
     for vuln in vulns:
         try:
             status = sync_ticket_status(vuln.jira_ticket_id)
             if status:
                 vuln.jira_status = status.get("status")
                 vuln.jira_assignee = status.get("assignee")
+
+                # Map Jira status to vulnerability status
+                new_status = map_jira_to_vuln_status(vuln.jira_status)
+                if new_status and vuln.status != new_status:
+                    vuln.status = new_status
+                    if new_status == Status.RESOLVED:
+                        vuln.resolved_date = datetime.now()
+                        status_changes["resolved"] += 1
+                    elif new_status == Status.IN_PROGRESS:
+                        vuln.resolved_date = None  # Clear if reopened
+                        status_changes["in_progress"] += 1
+                    elif new_status == Status.OPEN:
+                        vuln.resolved_date = None  # Clear if reopened
+                        status_changes["open"] += 1
+
                 updated += 1
         except Exception:
             pass
 
     db.commit()
-    return {"message": f"Synced {updated} of {len(vulns)} vulnerabilities"}
+    return {
+        "message": f"Synced {updated} of {len(vulns)} vulnerabilities",
+        "status_changes": status_changes
+    }
 
 
 @router.delete("/")
