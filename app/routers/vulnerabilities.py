@@ -1,4 +1,6 @@
 # app/routers/vulnerabilities.py
+import re
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -13,6 +15,46 @@ from app.config import get_settings
 
 router = APIRouter(prefix="/api/vulnerabilities", tags=["vulnerabilities"])
 settings = get_settings()
+logger = logging.getLogger(__name__)
+
+
+def escape_like_pattern(value: str) -> str:
+    """
+    Escape special characters in LIKE patterns to prevent SQL injection.
+    Characters escaped: %, _, \, [
+    """
+    # Escape the escape character first, then special LIKE characters
+    value = value.replace('\\', '\\\\')
+    value = value.replace('%', '\\%')
+    value = value.replace('_', '\\_')
+    value = value.replace('[', '\\[')
+    return value
+
+
+def sanitize_host_filter(host: str) -> str:
+    """
+    Sanitize and validate host filter input.
+    Returns sanitized value or raises HTTPException.
+    """
+    if not host:
+        return ""
+
+    # Limit length to prevent DoS
+    if len(host) > 255:
+        raise HTTPException(
+            status_code=400,
+            detail="Host filter too long (max 255 characters)"
+        )
+
+    # Basic validation: alphanumeric, dots, hyphens, and common characters
+    # This allows IP addresses, hostnames, and partial matches
+    if not re.match(r'^[\w\.\-\:\*\?\s]+$', host):
+        raise HTTPException(
+            status_code=400,
+            detail="Host filter contains invalid characters"
+        )
+
+    return escape_like_pattern(host.strip())
 
 
 def enrich_vulnerability(vuln: Vulnerability) -> dict:
@@ -78,7 +120,9 @@ async def list_vulnerabilities(
     if severity:
         query = query.filter(Vulnerability.severity == severity)
     if host:
-        query = query.filter(Vulnerability.host.ilike(f"%{host}%"))
+        # Sanitize host filter to prevent SQL injection via LIKE wildcards
+        safe_host = sanitize_host_filter(host)
+        query = query.filter(Vulnerability.host.ilike(f"%{safe_host}%", escape='\\'))
     if approaching_sla:
         # Filter to open vulns approaching SLA
         query = query.filter(
@@ -177,8 +221,9 @@ async def delete_vulnerability(vuln_id: str, db: Session = Depends(get_db)):
     if vuln.jira_ticket_id:
         try:
             jira_closed = close_ticket(vuln.jira_ticket_id)
-        except Exception:
-            pass  # Continue even if Jira close fails
+        except Exception as e:
+            # Log but continue - deletion should not fail due to Jira issues
+            logger.warning(f"Failed to close Jira ticket {vuln.jira_ticket_id}: {str(e)}")
 
     db.delete(vuln)
     db.commit()
@@ -296,8 +341,9 @@ async def sync_all_jira(db: Session = Depends(get_db)):
                         status_changes["open"] += 1
 
                 updated += 1
-        except Exception:
-            pass
+        except Exception as e:
+            # Log but continue with other vulnerabilities
+            logger.warning(f"Failed to sync Jira status for {vuln.jira_ticket_id}: {str(e)}")
 
     db.commit()
     return {
@@ -308,15 +354,27 @@ async def sync_all_jira(db: Session = Depends(get_db)):
 
 @router.delete("/")
 async def delete_all_vulnerabilities(
-    confirm: bool = Query(..., description="Must be true to confirm deletion"),
+    confirm_phrase: str = Query(..., description="Must be 'DELETE ALL VULNERABILITIES' to confirm"),
     db: Session = Depends(get_db)
 ):
-    """Delete ALL vulnerabilities. Requires confirm=true."""
-    if not confirm:
-        raise HTTPException(status_code=400, detail="Must set confirm=true to delete all")
+    """
+    Delete ALL vulnerabilities. Requires confirm_phrase='DELETE ALL VULNERABILITIES'.
+
+    This is a destructive operation that cannot be undone. Use with extreme caution.
+    """
+    expected_phrase = "DELETE ALL VULNERABILITIES"
+    if confirm_phrase != expected_phrase:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Confirmation phrase must be exactly '{expected_phrase}'"
+        )
 
     from app.models import Import
     count = db.query(Vulnerability).count()
+
+    if count == 0:
+        raise HTTPException(status_code=404, detail="No vulnerabilities to delete")
+
     db.query(Vulnerability).delete()
     db.query(Import).delete()
     db.commit()

@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime
 import tempfile
 import logging
+import zipfile
 
 from app.database import get_db
 from app.models import Vulnerability, Import, Scanner, Status
@@ -17,6 +18,14 @@ from app.services.jira_client import create_vulnerability_ticket, close_ticket
 router = APIRouter(prefix="/api/imports", tags=["imports"])
 logger = logging.getLogger(__name__)
 
+# Security: File upload limits
+MAX_FILE_SIZE_MB = 50
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024  # 50 MB
+ALLOWED_EXTENSIONS = {'.xlsx', '.xls'}
+# Excel magic bytes (ZIP format for xlsx, OLE2 for xls)
+XLSX_MAGIC = b'PK\x03\x04'
+XLS_MAGIC = b'\xd0\xcf\x11\xe0'
+
 # In-memory log storage for UI display
 _import_logs: list[dict] = []
 MAX_LOGS = 100
@@ -24,17 +33,76 @@ MAX_LOGS = 100
 
 def add_log(level: str, message: str, details: str = None):
     """Add a log entry."""
+    # Sanitize details to avoid leaking sensitive information
+    safe_details = details[:500] if details else None  # Truncate long details
     _import_logs.append({
         "timestamp": datetime.now().isoformat(),
         "level": level,
         "message": message,
-        "details": details
+        "details": safe_details
     })
     # Keep only last MAX_LOGS
     while len(_import_logs) > MAX_LOGS:
         _import_logs.pop(0)
     # Also log to console
-    getattr(logger, level.lower(), logger.info)(f"{message} - {details}")
+    getattr(logger, level.lower(), logger.info)(f"{message} - {safe_details}")
+
+
+def validate_excel_file(content: bytes, filename: str) -> None:
+    """
+    Validate that the uploaded file is a legitimate Excel file.
+    Raises HTTPException if validation fails.
+    """
+    # Check file size
+    if len(content) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum size is {MAX_FILE_SIZE_MB}MB"
+        )
+
+    if len(content) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Empty file uploaded"
+        )
+
+    # Check file extension
+    file_ext = Path(filename).suffix.lower() if filename else ''
+    if file_ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}"
+        )
+
+    # Check magic bytes (file signature)
+    if file_ext == '.xlsx':
+        if not content.startswith(XLSX_MAGIC):
+            raise HTTPException(
+                status_code=400,
+                detail="File content does not match .xlsx format"
+            )
+        # Verify it's a valid ZIP (xlsx is a ZIP archive)
+        try:
+            import io
+            with zipfile.ZipFile(io.BytesIO(content), 'r') as zf:
+                # Check for required Excel structure
+                namelist = zf.namelist()
+                if not any('xl/' in name for name in namelist):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid Excel file structure"
+                    )
+        except zipfile.BadZipFile:
+            raise HTTPException(
+                status_code=400,
+                detail="Corrupted or invalid .xlsx file"
+            )
+    elif file_ext == '.xls':
+        if not content.startswith(XLS_MAGIC):
+            raise HTTPException(
+                status_code=400,
+                detail="File content does not match .xls format"
+            )
 
 
 @router.post("/upload", response_model=ImportResponse)
@@ -45,9 +113,15 @@ async def upload_report(
 ):
     """Upload and process a vulnerability report."""
 
-    # Save uploaded file temporarily
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
-        content = await file.read()
+    # Read file content
+    content = await file.read()
+
+    # Security: Validate file before processing
+    validate_excel_file(content, file.filename)
+
+    # Save validated file temporarily
+    file_ext = Path(file.filename).suffix.lower() if file.filename else '.xlsx'
+    with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
         tmp.write(content)
         tmp_path = Path(tmp.name)
 
@@ -100,7 +174,9 @@ async def upload_report(
                         os=vuln_data.os
                     )
                 except Exception as e:
-                    add_log("ERROR", "Failed to generate AI remediation", str(e))
+                    # Log detailed error internally, but don't expose to users
+                    logger.error(f"Failed to generate AI remediation: {str(e)}")
+                    add_log("ERROR", "Failed to generate AI remediation", "Internal error - check server logs")
                     remediation = None
 
                 # Create Jira ticket
@@ -123,9 +199,11 @@ async def upload_report(
                     )
                     add_log("INFO", f"Created Jira ticket {ticket_id}", f"CVE: {vuln_data.cve}, Host: {vuln_data.host}")
                 except ValueError as e:
-                    add_log("WARNING", "Jira not configured", str(e))
+                    add_log("WARNING", "Jira not configured", "Configure JIRA_URL, JIRA_EMAIL, and JIRA_API_TOKEN")
                 except Exception as e:
-                    add_log("ERROR", f"Failed to create Jira ticket", f"CVE: {vuln_data.cve}, Error: {str(e)}")
+                    # Log detailed error internally, sanitize for UI
+                    logger.error(f"Failed to create Jira ticket for CVE {vuln_data.cve}: {str(e)}")
+                    add_log("ERROR", "Failed to create Jira ticket", f"CVE: {vuln_data.cve or 'N/A'}")
 
                 # Create database record
                 new_vuln = Vulnerability(

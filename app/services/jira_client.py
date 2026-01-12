@@ -1,10 +1,12 @@
 # app/services/jira_client.py
+import logging
 from jira import JIRA
 from datetime import datetime
 from app.config import get_settings
 from app.models import Severity, Scanner
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 def get_jira_client() -> JIRA | None:
@@ -122,6 +124,7 @@ def close_ticket(ticket_id: str) -> bool:
     """Close a Jira ticket."""
     jira = get_jira_client()
     if not jira:
+        logger.debug("Jira client not configured, skipping ticket close")
         return False
 
     try:
@@ -131,9 +134,12 @@ def close_ticket(ticket_id: str) -> bool:
         for t in transitions:
             if t["name"].lower() in ["done", "closed", "resolved"]:
                 jira.transition_issue(issue, t["id"])
+                logger.info(f"Closed Jira ticket {ticket_id}")
                 return True
+        logger.warning(f"No suitable close transition found for ticket {ticket_id}")
         return False
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to close Jira ticket {ticket_id}: {str(e)}")
         return False
 
 
@@ -141,13 +147,17 @@ def sync_ticket_status(ticket_id: str) -> dict | None:
     """Sync status from Jira ticket."""
     jira = get_jira_client()
     if not jira:
+        logger.debug("Jira client not configured, skipping status sync")
         return None
 
     try:
         issue = jira.issue(ticket_id)
-        return {
+        status_info = {
             "status": str(issue.fields.status),
             "assignee": str(issue.fields.assignee) if issue.fields.assignee else None,
         }
-    except Exception:
+        logger.debug(f"Synced Jira ticket {ticket_id}: status={status_info['status']}")
+        return status_info
+    except Exception as e:
+        logger.error(f"Failed to sync Jira ticket {ticket_id}: {str(e)}")
         return None
