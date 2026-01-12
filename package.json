@@ -1,0 +1,26 @@
+{
+  "name": "vulmgt",
+  "version": "1.0.0",
+  "description": "Vulnerability management app using claude",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build:css": "tailwindcss -i ./app/static/src/input.css -o ./app/static/styles.css --minify",
+    "watch:css": "tailwindcss -i ./app/static/src/input.css -o ./app/static/styles.css --watch"
+  },
+  "repository": {
+    "type": "git",
+    "url": "http://local_proxy@127.0.0.1:64320/git/lukelongney/vulmgt"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.1.18",
+    "tailwindcss": "^4.1.18"
+  }
+}

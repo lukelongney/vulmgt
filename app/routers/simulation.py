@@ -1,13 +1,28 @@
 # app/routers/simulation.py
 """API endpoints for time simulation (testing/demo purposes)."""
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
 
-from app.config import get_effective_date, set_simulated_date, get_simulated_date
+from app.config import get_effective_date, set_simulated_date, get_simulated_date, get_settings
 
 router = APIRouter(prefix="/api/simulation", tags=["simulation"])
+settings = get_settings()
+
+
+def check_simulation_enabled():
+    """Check if time simulation is enabled. Raises HTTPException if disabled."""
+    if not settings.enable_time_simulation:
+        raise HTTPException(
+            status_code=403,
+            detail="Time simulation is disabled in this environment"
+        )
+    if settings.environment.lower() == "production":
+        raise HTTPException(
+            status_code=403,
+            detail="Time simulation is not available in production environment"
+        )
 
 
 class SimulatedDateRequest(BaseModel):
@@ -40,7 +55,12 @@ async def set_date(request: SimulatedDateRequest):
 
     - Send {"date": "2026-01-20"} to simulate that date
     - Send {"date": null} or {} to clear simulation and use real time
+
+    Note: This endpoint is disabled in production environments.
     """
+    # Security: Check if simulation is allowed
+    check_simulation_enabled()
+
     if request.date:
         # Parse the date string
         try:
@@ -66,7 +86,13 @@ async def set_date(request: SimulatedDateRequest):
 
 @router.delete("/date", response_model=SimulatedDateResponse)
 async def clear_date():
-    """Clear the simulated date and return to real time."""
+    """Clear the simulated date and return to real time.
+
+    Note: This endpoint is disabled in production environments.
+    """
+    # Security: Check if simulation is allowed
+    check_simulation_enabled()
+
     set_simulated_date(None)
     effective = get_effective_date()
 

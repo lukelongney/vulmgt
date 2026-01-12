@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     # Escalation
     escalation_threshold_percent: int = 75
 
+    # Environment settings
+    # Set to 'production' to disable time simulation
+    environment: str = "development"
+
+    # Security: Enable/disable dangerous features
+    enable_time_simulation: bool = True  # Override to False in production
+
     class Config:
         env_file = ".env"
 
